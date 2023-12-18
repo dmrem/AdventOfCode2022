@@ -1,21 +1,65 @@
-use crate::Type::{Dir, File};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
 struct Node {
     name: String, // for debugging
     file_type: Type,
-    size: u32,
+    size: u64,
     children: HashMap<String, Rc<RefCell<Node>>>,
     parent: Option<Weak<RefCell<Node>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 enum Type {
     Dir,
     File,
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        fn write_with_indents(f: &mut Formatter<'_>, root: &Node, num_indents: usize) {
+            match root.file_type {
+                Type::File => {
+                    writeln!(
+                        f,
+                        "{}- {} (File: size = {})",
+                        "    ".repeat(num_indents),
+                        root.name,
+                        root.size
+                    )
+                    .unwrap();
+                }
+                Type::Dir => {
+                    writeln!(
+                        f,
+                        "{}- {} (Dir: size = {})",
+                        "    ".repeat(num_indents),
+                        root.name,
+                        root.size
+                    )
+                    .unwrap();
+                    root.children.values().for_each(|x| {
+                        write_with_indents(f, &x.as_ref().borrow(), num_indents + 1);
+                    });
+
+                    // // print files separately from dirs
+                    // root.children.values().filter(|x| x.borrow().file_type == Type::File).for_each(|x| {
+                    //     write_with_indents(f, &x.as_ref().borrow(), num_indents + 1);
+                    // });
+                    //
+                    // root.children.values().filter(|x| x.borrow().file_type == Type::Dir).for_each(|x| {
+                    //     write_with_indents(f, &x.as_ref().borrow(), num_indents + 1);
+                    // })
+                }
+            }
+        }
+
+        write_with_indents(f, self, 0);
+        Ok(())
+    }
 }
 
 fn main() {
@@ -28,14 +72,17 @@ fn main() {
 
     let root = Rc::new(RefCell::new(Node {
         name: "/".to_string(),
-        file_type: Dir,
+        file_type: Type::Dir,
         size: 0,
         children: HashMap::new(),
         parent: None,
     }));
 
     parse_history(&history, root.clone(), root.clone());
-    dbg!(root);
+    calculate_sizes(root.clone());
+
+    // println!("{}", root.borrow());
+    dbg!(get_sum_of_small_dirs(root.clone()));
 }
 
 fn parse_history(history: &[&str], root: Rc<RefCell<Node>>, curr: Rc<RefCell<Node>>) {
@@ -56,7 +103,7 @@ fn parse_history(history: &[&str], root: Rc<RefCell<Node>>, curr: Rc<RefCell<Nod
             name => {
                 let temp = Rc::new(RefCell::new(Node {
                     name: name.to_string(),
-                    file_type: Dir,
+                    file_type: Type::Dir,
                     size: 0,
                     children: HashMap::new(),
                     parent: Some(Rc::downgrade(&curr.clone())),
@@ -82,7 +129,7 @@ fn parse_history(history: &[&str], root: Rc<RefCell<Node>>, curr: Rc<RefCell<Nod
                         x[1].to_string(),
                         Rc::new(RefCell::new(Node {
                             name: x[1].to_string(),
-                            file_type: File,
+                            file_type: Type::File,
                             size: x[0].parse().unwrap(),
                             children: HashMap::new(),
                             parent: Some(Rc::downgrade(&curr.clone())),
@@ -91,7 +138,40 @@ fn parse_history(history: &[&str], root: Rc<RefCell<Node>>, curr: Rc<RefCell<Nod
                 });
             parse_history(&history[items.len() + 1..], root.clone(), curr.clone())
         }
-        [] => {},
+        [] => {}
+        _ => panic!(),
+    }
+}
+
+fn calculate_sizes(root: Rc<RefCell<Node>>) -> u64 {
+    let mut r = root.borrow_mut();
+    match &*r {
+        Node {
+            file_type: Type::Dir,
+            children,
+            ..
+        } => {
+            r.size = children.values().map(|x| calculate_sizes(x.clone())).sum();
+            r.size
+        }
+        Node {
+            file_type: Type::File,
+            size,
+            ..
+        } => *size,
+    }
+}
+
+fn get_sum_of_small_dirs(root: Rc<RefCell<Node>>) -> u64 {
+    match root.borrow().file_type {
+        Type::Dir => {
+            (if root.borrow().size <= 100000 { root.borrow().size } else { 0u64 })
+                + root.borrow().children
+                    .values()
+                    .filter(|x| x.borrow().file_type == Type::Dir)
+                    .map(|x| get_sum_of_small_dirs(x.clone()))
+                    .sum::<u64>()
+        }
         _ => panic!(),
     }
 }
